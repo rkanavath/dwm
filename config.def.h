@@ -14,6 +14,13 @@ static const int showtab            = showtab_auto; /* Default tab bar show mode
 static const int toptab             = False;    /* False means bottom tab bar */
 
 
+static const char orange_red[]  = "#ff4500";
+static const char blue[]        = "#224488";
+static const char bright_blue[] = "#0066ff";
+static const char black[]       = "#000000";
+static const char gray[]        = "#bbbbbb";
+static const char white[]       = "#ffffff";
+
 static const char *fonts[]          = { "Inconsolata:size=18" };
 static const char dmenufont[]       = "Inconsolata:size=18";
 static const char col_gray1[]       = "#222222";
@@ -25,6 +32,7 @@ static const char *colors[SchemeLast][3]      = {
 	/*               fg         bg         border   */
 	[SchemeNorm] = { col_gray3, col_gray1, col_gray2 },
 	[SchemeSel] =  { col_gray4, col_cyan,  col_cyan  },
+	[SchemeUrg]     = { white,      orange_red, orange_red  },
 };
 
 /* tagging */
@@ -39,6 +47,27 @@ static const Rule rules[] = {
 	{ "Gimp",       NULL,     NULL,       0,            1,           -1 },
 	{ "iceweasal",  NULL,     NULL,       1 << 8,       0,           -1 },
 };
+
+/**
+ * Rules hook
+ *
+ * This function is called once applyrules is done processing a client with the
+ * client in question passed as an argument.
+ */
+void ruleshook(Client *c)
+{
+    // Certain floating Wine windows always get positioned off-screen. When
+    // that happens, this code will center them.
+    if (!strcmp(c->class, "Wine") && c->x < 1) {
+        c->x = c->mon->mx + (c->mon->mw / 2 - WIDTH(c) / 2);
+        c->y = c->mon->my + (c->mon->mh / 2 - HEIGHT(c) / 2);
+    }
+
+    // Mark windows that get created offscreen as urgent.
+    if (!scanning && !ISVISIBLE(c)) {
+        seturgent(c);
+    }
+}
 
 /* layout(s) */
 static const float mfact     = 0.55; /* factor of master area size [0.05..0.95] */
@@ -83,6 +112,7 @@ static Key keys[] = {
 	{ MODKEY,               36,    zoom,           {0} },             // Return
 	{ MODKEY,               23,    view,           {0} },             // Tab
 	{ MODKEY|ShiftMask,     54,    killclient,     {0} },             // c
+	{ MODKEY,               39,  lastclient,     {0} },	
 	{ MODKEY|ShiftMask,     28,    setlayout,      {.v = &layouts[0]} }, // t
 	{ MODKEY|ShiftMask,     41,    setlayout,      {.v = &layouts[2]} }, // f
 	{ MODKEY|ShiftMask,     47,    setlayout,      {.v = &layouts[1]} }, // m

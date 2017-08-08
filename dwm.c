@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <X11/cursorfont.h>
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -59,10 +60,12 @@
 
 /* enums */
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
-enum { SchemeNorm, SchemeSel, SchemeLast }; /* color schemes */
+enum { SchemeNorm, SchemeSel, SchemeUrg, SchemeLast }; /* color schemes */
 enum { NetSupported, NetWMName, NetWMState,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
-       NetWMWindowTypeDialog, NetClientList, NetLast }; /* EWMH atoms */
+       NetWMWindowTypeDialog, NetClientList, NetNumberOfDesktops,
+       NetCurrentDesktop, NetWMDesktop, NetCloseWindow, NetLast }; /* EWMH atoms */
+enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkTagBar, ClkTabBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
        ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
@@ -91,12 +94,15 @@ struct Client {
 	int oldx, oldy, oldw, oldh;
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh;
 	int bw, oldbw;
+	char class[256];
+	char instance[256];
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	Client *next;
 	Client *snext;
 	Monitor *mon;
 	Window win;
+	double ft;
 };
 
 typedef struct {
@@ -189,6 +195,7 @@ static void grabkeys(void);
 static void incnmaster(const Arg *arg);
 static void keypress(XEvent *e);
 static void killclient(const Arg *arg);
+static void lastclient();
 static void manage(Window w, XWindowAttributes *wa);
 static void mappingnotify(XEvent *e);
 static void maprequest(XEvent *e);
@@ -206,14 +213,16 @@ static void resizemouse(const Arg *arg);
 static void restack(Monitor *m);
 static void run(void);
 static void scan(void);
-static int sendevent(Client *c, Atom proto);
+static int sendevent(Window w, Atom proto, int m, long d0, long d1, long d2, long d3, long d4);
 static void sendmon(Client *c, Monitor *m);
 static void setclientstate(Client *c, long state);
 static void setfocus(Client *c);
 static void setfullscreen(Client *c, int fullscreen);
 static void setlayout(const Arg *arg);
 static void setmfact(const Arg *arg);
+static void setnumbdesktops(void);
 static void setup(void);
+static void seturgent(Client *c);
 static void showhide(Client *c);
 static void sigchld(int unused);
 static void spawn(const Arg *arg);
@@ -228,6 +237,8 @@ static void toggleview(const Arg *arg);
 static void unfocus(Client *c, int setfocus);
 static void unmanage(Client *c, int destroyed);
 static void unmapnotify(XEvent *e);
+static void updateclientdesktop(Client *c);
+static void updatecurrentdesktop(void);
 static int updategeom(void);
 static void updatebarpos(Monitor *m);
 static void updatebars(void);
@@ -272,8 +283,9 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[PropertyNotify] = propertynotify,
 	[UnmapNotify] = unmapnotify
 };
-static Atom wmatom[WMLast], netatom[NetLast];
+static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast];
 static int running = 1;
+static int scanning = 1;
 static Cur *cursor[CurLast];
 static Scm scheme[SchemeLast];
 static Display *dpy;
@@ -302,7 +314,11 @@ applyrules(Client *c)
 	c->tags = 0;
 	XGetClassHint(dpy, c->win, &ch);
 	class    = ch.res_class ? ch.res_class : broken;
+	strncpy(c->class, class,  sizeof(c->class));
+	c->class[sizeof(c->class) - 1] = '\0';	
 	instance = ch.res_name  ? ch.res_name  : broken;
+	strncpy(c->instance, instance,  sizeof(c->instance));
+	c->instance[sizeof(c->instance) - 1] = '\0';
 
 	for (i = 0; i < LENGTH(rules); i++) {
 		r = &rules[i];
@@ -322,6 +338,7 @@ applyrules(Client *c)
 	if (ch.res_name)
 		XFree(ch.res_name);
 	c->tags = c->tags & TAGMASK ? c->tags & TAGMASK : c->mon->tagset[c->mon->seltags];
+	ruleshook(c);
 }
 
 int
@@ -393,6 +410,7 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 void
 arrange(Monitor *m)
 {
+	updatecurrentdesktop();
 	if (m)
 		showhide(m->stack);
 	else for (m = mons; m; m = m->next)
@@ -559,7 +577,7 @@ clientmessage(XEvent *e)
 {
 	XClientMessageEvent *cme = &e->xclient;
 	Client *c = wintoclient(cme->window);
-
+	Arg arg;
 	if (!c)
 		return;
 	if (cme->message_type == netatom[NetWMState]) {
@@ -572,6 +590,14 @@ clientmessage(XEvent *e)
 			c->mon->tagset[c->mon->seltags] = c->tags;
 		}
 		pop(c);
+	}
+		else if(cme->message_type == netatom[NetWMDesktop]) {
+		c->tags = cme->data.l[0];
+		arrange(c->mon);
+	}
+	else if(cme->message_type == netatom[NetCloseWindow]) {
+		arg.v = (void *) c;
+		killclient(&arg);
 	}
 }
 
@@ -768,8 +794,14 @@ drawbar(Monitor *m)
 	x = 0;
 	for (i = 0; i < LENGTH(tags); i++) {
 		w = TEXTW(tags[i]);
-		drw_setscheme(drw, scheme[m->tagset[m->seltags] & 1 << i ? SchemeSel : SchemeNorm]);
-		drw_text(drw, x, 0, w, bh, lrpad / 2, tags[i], urg & 1 << i);
+		if (m->tagset[m->seltags] & 1 << i) {
+			drw_setscheme(drw, scheme[SchemeSel]);
+		} else if (urg & 1 << i) {
+			drw_setscheme(drw, scheme[SchemeUrg]);
+		} else {
+			drw_setscheme(drw, scheme[SchemeNorm]);
+		}
+		drw_text(drw, x, 0, w, bh, lrpad / 2, tags[i], 0);
 		if (occ & 1 << i)
 			drw_rect(drw, x + boxs, boxs, boxw, boxw,
 			         m == selmon && selmon->sel && selmon->sel->tags & 1 << i,
@@ -1168,16 +1200,38 @@ keypress(XEvent *e)
 void
 killclient(const Arg *arg)
 {
-	if (!selmon->sel)
+	Client *c;
+
+	if (arg->v) {
+		c = (Client *) arg->v;
+	} else {
+		c = selmon->sel;
+	}
+
+	if (!c)
 		return;
-	if (!sendevent(selmon->sel, wmatom[WMDelete])) {
+	if (!sendevent(c->win, wmatom[WMDelete], NoEventMask, wmatom[WMDelete], CurrentTime, 0 , 0, 0)) {
 		XGrabServer(dpy);
 		XSetErrorHandler(xerrordummy);
 		XSetCloseDownMode(dpy, DestroyAll);
-		XKillClient(dpy, selmon->sel->win);
+		XKillClient(dpy, c->win);
 		XSync(dpy, False);
 		XSetErrorHandler(xerror);
 		XUngrabServer(dpy);
+	}
+}
+
+void
+lastclient() {
+	Client *c, *o;
+	for (o = selmon->sel, c = selmon->clients; c; c = c->next) {
+		if (ISVISIBLE(c) && c != selmon->sel && (o == selmon->sel || c->ft > o->ft)) {
+			o = c;
+		}
+	}
+
+	if (o != selmon->sel) {
+		focus(o);
 	}
 }
 
@@ -1190,6 +1244,7 @@ manage(Window w, XWindowAttributes *wa)
 
 	c = ecalloc(1, sizeof(Client));
 	c->win = w;
+	c->ft = 0;
 	/* geometry */
 	c->x = c->oldx = wa->x;
 	c->y = c->oldy = wa->y;
@@ -1241,6 +1296,8 @@ manage(Window w, XWindowAttributes *wa)
 	arrange(c->mon);
 	XMapWindow(dpy, c->win);
 	focus(NULL);
+	/* set clients tag as current desktop (_NET_WM_DESKTOP) */
+	updateclientdesktop(c);
 }
 
 void
@@ -1578,6 +1635,8 @@ scan(void)
 		if (wins)
 			XFree(wins);
 	}
+
+	scanning = 0;
 }
 
 void
@@ -1590,6 +1649,7 @@ sendmon(Client *c, Monitor *m)
 	detachstack(c);
 	c->mon = m;
 	c->tags = m->tagset[m->seltags]; /* assign tags of target monitor */
+	updateclientdesktop(c);
 	attach(c);
 	attachstack(c);
 	focus(NULL);
@@ -1606,26 +1666,35 @@ setclientstate(Client *c, long state)
 }
 
 int
-sendevent(Client *c, Atom proto)
+sendevent(Window w, Atom proto, int mask, long d0, long d1, long d2, long d3, long d4)
 {
 	int n;
-	Atom *protocols;
+	Atom *protocols, mt;
 	int exists = 0;
 	XEvent ev;
-
-	if (XGetWMProtocols(dpy, c->win, &protocols, &n)) {
-		while (!exists && n--)
-			exists = protocols[n] == proto;
-		XFree(protocols);
+	if (proto == wmatom[WMTakeFocus] || proto == wmatom[WMDelete]) {
+		mt = wmatom[WMProtocols];
+		if (XGetWMProtocols(dpy, w, &protocols, &n)) {
+			while(!exists && n--)
+				exists = protocols[n] == proto;
+			XFree(protocols);
+		}
+	}
+	else {
+		exists = True;
+		mt = proto;
 	}
 	if (exists) {
 		ev.type = ClientMessage;
-		ev.xclient.window = c->win;
-		ev.xclient.message_type = wmatom[WMProtocols];
+		ev.xclient.window = w;
+		ev.xclient.message_type = mt;
 		ev.xclient.format = 32;
-		ev.xclient.data.l[0] = proto;
-		ev.xclient.data.l[1] = CurrentTime;
-		XSendEvent(dpy, c->win, False, NoEventMask, &ev);
+		ev.xclient.data.l[0] = d0;
+		ev.xclient.data.l[1] = d1;
+		ev.xclient.data.l[2] = d2;
+		ev.xclient.data.l[3] = d3;
+		ev.xclient.data.l[4] = d4;
+		XSendEvent(dpy, w, False, mask, &ev);
 	}
 	return exists;
 }
@@ -1633,13 +1702,19 @@ sendevent(Client *c, Atom proto)
 void
 setfocus(Client *c)
 {
+	struct timespec now;
 	if (!c->neverfocus) {
 		XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
 		XChangeProperty(dpy, root, netatom[NetActiveWindow],
 		                XA_WINDOW, 32, PropModeReplace,
 		                (unsigned char *) &(c->win), 1);
+		if (clock_gettime(CLOCK_MONOTONIC, &now)) {
+			perror("clock_gettime");
+		} else {
+			c->ft = (double) now.tv_sec + now.tv_nsec * 0.000000001;
+		}
 	}
-	sendevent(c, wmatom[WMTakeFocus]);
+	sendevent(c->win, wmatom[WMTakeFocus], NoEventMask, wmatom[WMTakeFocus], CurrentTime, 0, 0, 0);
 }
 
 void
@@ -1700,6 +1775,13 @@ setmfact(const Arg *arg)
 }
 
 void
+setnumbdesktops(void){
+  long data[] = { TAGMASK };
+  XChangeProperty(dpy, root, netatom[NetNumberOfDesktops], XA_CARDINAL, 32,
+		  PropModeReplace, (unsigned char *)data, 1);
+}
+
+void
 setup(void)
 {
 	XSetWindowAttributes wa;
@@ -1729,14 +1811,22 @@ setup(void)
 	netatom[NetWMName] = XInternAtom(dpy, "_NET_WM_NAME", False);
 	netatom[NetWMState] = XInternAtom(dpy, "_NET_WM_STATE", False);
 	netatom[NetWMFullscreen] = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	netatom[NetNumberOfDesktops] = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
+	netatom[NetCurrentDesktop] = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
 	netatom[NetWMWindowType] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
 	netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
+	netatom[NetCloseWindow] = XInternAtom(dpy, "_NET_CLOSE_WINDOW", False);
+	xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
+ 	xatom[Xembed] = XInternAtom(dpy, "_XEMBED", False);
+ 	xatom[XembedInfo] = XInternAtom(dpy, "_XEMBED_INFO", False);
+	netatom[NetWMDesktop] = XInternAtom(dpy, "_NET_WM_DESKTOP", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
 	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
 	cursor[CurMove] = drw_cur_create(drw, XC_fleur);
 	/* init appearance */
+	scheme[SchemeUrg] = drw_scm_create(drw, colors[SchemeUrg], 3);
 	scheme[SchemeNorm] = drw_scm_create(drw, colors[SchemeNorm], 3);
 	scheme[SchemeSel] = drw_scm_create(drw, colors[SchemeSel], 3);
 	/* init bars */
@@ -1746,6 +1836,8 @@ setup(void)
 	XChangeProperty(dpy, root, netatom[NetSupported], XA_ATOM, 32,
 			PropModeReplace, (unsigned char *) netatom, NetLast);
 	XDeleteProperty(dpy, root, netatom[NetClientList]);
+	/* set EWMH NUMBER_OF_DESKTOPS */
+	setnumbdesktops();
 	/* select for events */
 	wa.cursor = cursor[CurNormal]->cursor;
 	wa.event_mask = SubstructureRedirectMask|SubstructureNotifyMask|ButtonPressMask|PointerMotionMask
@@ -1754,6 +1846,18 @@ setup(void)
 	XSelectInput(dpy, root, wa.event_mask);
 	grabkeys();
 	focus(NULL);
+}
+
+void
+seturgent(Client *c) {
+	XWMHints *wmh;
+
+	c->isurgent = 1;
+	if (!(wmh = XGetWMHints(dpy, c->win)))
+		return;
+	wmh->flags |= XUrgencyHint;
+	XSetWMHints(dpy, c->win, wmh);
+	XFree(wmh);
 }
 
 void
@@ -1803,6 +1907,7 @@ tag(const Arg *arg)
 {
 	if (selmon->sel && arg->ui & TAGMASK) {
 		selmon->sel->tags = arg->ui & TAGMASK;
+		updateclientdesktop(selmon->sel);
 		focus(NULL);
 		arrange(selmon);
 	}
@@ -2025,6 +2130,22 @@ updateclientlist()
 			XChangeProperty(dpy, root, netatom[NetClientList],
 			                XA_WINDOW, 32, PropModeAppend,
 			                (unsigned char *) &(c->win), 1);
+}
+
+void
+updateclientdesktop(Client *c) {
+	long data[] = { c->tags };
+
+	XChangeProperty(dpy, c->win, netatom[NetWMDesktop], XA_CARDINAL, 32,
+			PropModeReplace, (unsigned char *)data, 1);
+}
+
+void
+updatecurrentdesktop(){
+	long data[] = { selmon->tagset[selmon->seltags] };
+
+	XChangeProperty(dpy, root, netatom[NetCurrentDesktop], XA_CARDINAL, 32,
+			PropModeReplace, (unsigned char *)data, 1);
 }
 
 int

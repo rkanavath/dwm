@@ -36,7 +36,7 @@ static const char *colors[SchemeLast][3]      = {
 };
 
 /* tagging */
-static const char *tags[] = { "A", "B", "C", "D", "E", "F", "G", "H", "4" };
+static const char *tags[] = { "1", "2", "3", "A", "Z", "E", "Q", "S", "D" };
 
 static const Rule rules[] = {
 	/* xprop(1):
@@ -44,8 +44,8 @@ static const Rule rules[] = {
 	 *	WM_NAME(STRING) = title
 	 */
 	/* class      instance    title       tags mask     isfloating   monitor */
-	{ "Gimp",       NULL,     NULL,       0,            1,           -1 },
-	{ "iceweasal",  NULL,     NULL,       1 << 8,       0,           -1 },
+        { "emacs",       NULL,     NULL,       0,            1,           -1 },
+	{ "firefox",     NULL,     NULL,       1 << 8,       1,           -1 },
 };
 
 /**
@@ -75,65 +75,70 @@ static const int nmaster     = 1;    /* number of clients in master area */
 static const int resizehints = 1;    /* 1 means respect size hints in tiled resizals */
 
 static const Layout layouts[] = {
-	/* symbol     arrange function */
-	{ "[]=",      tile },    /* first entry is default */
-	{ "><>",      NULL },    /* no layout function means floating behavior */
-	{ "[M]",      monocle },
+  /* symbol     arrange function */
+  /* first entry is default */
+  { "[M]",      monocle },
+  { "[]=",      tile },    
+  { "><>",      NULL },    /* no layout function means floating behavior */
 };
 
 /* key definitions */
-#define MODKEY Mod1Mask
+#define MODKEY Mod4Mask
 #define TAGKEYS(KEY,TAG) \
 	{ MODKEY,                       KEY,      view,           {.ui = 1 << TAG} }, \
 	{ MODKEY|ControlMask,           KEY,      toggleview,     {.ui = 1 << TAG} }, \
-	{ MODKEY|ShiftMask,             KEY,      tag,            {.ui = 1 << TAG} }, \
+	{ MODKEY|ControlMask,             KEY,      tag,            {.ui = 1 << TAG} }, \
 	{ MODKEY|ControlMask|ShiftMask, KEY,      toggletag,      {.ui = 1 << TAG} },
 
 /* helper for spawning shell commands in the pre dwm-5.0 fashion */
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 
 /* commands */
+
 static char dmenumon[2] = "0"; /* component of dmenucmd, manipulated in spawn() */
 static const char *dmenucmd[] = { "dmenu_run", "-m", dmenumon, "-fn", dmenufont, "-nb", col_gray1, "-nf", col_gray3, "-sb", col_cyan, "-sf", col_gray4, NULL };
 static const char *termcmd[]  = { "st", NULL };
+/* static const char *termcmd[]  = { "st", "-e", "tmux", NULL }; */
 
 static Key keys[] = {
 	/* modifier             key    function        argument */
 	{ MODKEY,               33,    spawn,          {.v = dmenucmd } }, // p
-	{ MODKEY|ShiftMask,     36,    spawn,          {.v = termcmd } }, // Return
+	{ MODKEY|ControlMask,   36,    spawn,          {.v = termcmd } }, // Return
 	{ MODKEY,               56,    togglebar,      {0} },             // b
-	{ MODKEY|ShiftMask,     52,    tabmode,        {-1} },
+	{ MODKEY|ControlMask,   52,    tabmode,        {-1} },
 	{ MODKEY,               44,    focusstack,     {.i = +1 } },      // j
 	{ MODKEY,               45,    focusstack,     {.i = -1 } },      // k
 	{ MODKEY,               31,    incnmaster,     {.i = +1 } },      // i
-	{ MODKEY,               40,    incnmaster,     {.i = -1 } },      // d
+	{ MODKEY,               32,    incnmaster,     {.i = -1 } },      // o
 	{ MODKEY,               43,    setmfact,       {.f = -0.05} },    // h
 	{ MODKEY,               46,    setmfact,       {.f = +0.05} },    // l
 	{ MODKEY,               36,    zoom,           {0} },             // Return
 	{ MODKEY,               23,    view,           {0} },             // Tab
-	{ MODKEY|ShiftMask,     54,    killclient,     {0} },             // c
+	{ MODKEY|ControlMask,   54,    killclient,     {0} },             // c
 	{ MODKEY,               39,  lastclient,     {0} },	
-	{ MODKEY|ShiftMask,     28,    setlayout,      {.v = &layouts[0]} }, // t
-	{ MODKEY|ShiftMask,     41,    setlayout,      {.v = &layouts[2]} }, // f
-	{ MODKEY|ShiftMask,     47,    setlayout,      {.v = &layouts[1]} }, // m
-	{ MODKEY|ShiftMask,     65,    setlayout,      {0} },             // space
-	{ MODKEY|ShiftMask,     65,    togglefloating, {0} },             // space
+	{ MODKEY|ControlMask,   28,    setlayout,      {.v = &layouts[0]} }, // t
+	{ MODKEY|ControlMask,   41,    setlayout,      {.v = &layouts[2]} }, // f
+	{ MODKEY|ControlMask,   47,    setlayout,      {.v = &layouts[1]} }, // m
+	{ MODKEY|ControlMask,   65,    setlayout,      {0} },             // space
+	{ MODKEY|ControlMask,   65,    togglefloating, {0} },             // space
 	{ MODKEY,               19,    view,           {.ui = ~0 } },     // 0
-	{ MODKEY|ShiftMask,     19,    tag,            {.ui = ~0 } },     // 0
+	{ MODKEY|ControlMask,   19,    tag,            {.ui = ~0 } },     // 0
+	
 	{ MODKEY,               59,    focusmon,       {.i = -1 } },      // comma
 	{ MODKEY,               60,    focusmon,       {.i = +1 } },      // period
-	{ MODKEY|ShiftMask,     59,    tagmon,         {.i = -1 } },      // comma
-	{ MODKEY|ShiftMask,     60,    tagmon,         {.i = +1 } },      // period
+	{ MODKEY|ControlMask,   59,    tagmon,         {.i = -1 } },      // comma
+	{ MODKEY|ControlMask,   60,    tagmon,         {.i = +1 } },      // period
+       
 	TAGKEYS(                10,                    0)                 // 1
 	TAGKEYS(                11,                    1)                 // 2
 	TAGKEYS(                12,                    2)                 // 3
-	TAGKEYS(                13,                    3)                 // 4
-	TAGKEYS(                14,                    4)                 // 5
-	TAGKEYS(                15,                    5)                 // 6
-	TAGKEYS(                16,                    6)                 // 7
-	TAGKEYS(                17,                    7)                 // 8
-	TAGKEYS(                18,                    8)                 // 9
-	{ MODKEY|ShiftMask,     38,    quit,           {0} },             // q
+	TAGKEYS(                24,                    3)                 // a
+	TAGKEYS(                25,                    4)                 // z
+	TAGKEYS(                26,                    5)                 // e
+	TAGKEYS(                38,                    6)                 // q
+	TAGKEYS(                39,                    7)                 // s
+	TAGKEYS(                40,                    8)                 // d
+	{ MODKEY|ControlMask,     38,    quit,           {0} },             // q
 };
 
 /* button definitions */

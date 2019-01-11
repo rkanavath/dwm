@@ -97,7 +97,7 @@ struct Client {
 	char class[256];
 	char instance[256];
 	unsigned int tags;
-	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
+        int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, needresize;
 	Client *next;
 	Client *snext;
 	Monitor *mon;
@@ -314,11 +314,11 @@ applyrules(Client *c)
 	c->tags = 0;
 	XGetClassHint(dpy, c->win, &ch);
 	class    = ch.res_class ? ch.res_class : broken;
-	strncpy(c->class, class,  sizeof(c->class));
-	c->class[sizeof(c->class) - 1] = '\0';	
+	//strncpy(c->class, class,  sizeof(c->class));
+	//c->class[sizeof(c->class) - 1] = '\0';	
 	instance = ch.res_name  ? ch.res_name  : broken;
-	strncpy(c->instance, instance,  sizeof(c->instance));
-	c->instance[sizeof(c->instance) - 1] = '\0';
+	//strncpy(c->instance, instance,  sizeof(c->instance));
+	//c->instance[sizeof(c->instance) - 1] = '\0';
 
 	for (i = 0; i < LENGTH(rules); i++) {
 		r = &rules[i];
@@ -338,7 +338,7 @@ applyrules(Client *c)
 	if (ch.res_name)
 		XFree(ch.res_name);
 	c->tags = c->tags & TAGMASK ? c->tags & TAGMASK : c->mon->tagset[c->mon->seltags];
-	ruleshook(c);
+	//ruleshook(c);
 }
 
 int
@@ -687,6 +687,8 @@ configurerequest(XEvent *e)
 				configure(c);
 			if (ISVISIBLE(c))
 				XMoveResizeWindow(dpy, c->win, c->x, c->y, c->w, c->h);
+			else
+				c->needresize = 1;			
 		} else
 			configure(c);
 	} else {
@@ -1817,7 +1819,7 @@ setup(void)
 	netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
 	netatom[NetCloseWindow] = XInternAtom(dpy, "_NET_CLOSE_WINDOW", False);
-	xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
+	//xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
  	xatom[Xembed] = XInternAtom(dpy, "_XEMBED", False);
  	xatom[XembedInfo] = XInternAtom(dpy, "_XEMBED_INFO", False);
 	netatom[NetWMDesktop] = XInternAtom(dpy, "_NET_WM_DESKTOP", False);
@@ -1868,6 +1870,12 @@ showhide(Client *c)
 	if (ISVISIBLE(c)) {
 		/* show clients top down */
 		XMoveWindow(dpy, c->win, c->x, c->y);
+		if (c->needresize) {
+			c->needresize = 0;
+			XMoveResizeWindow(dpy, c->win, c->x, c->y, c->w, c->h);
+		} else {
+			XMoveWindow(dpy, c->win, c->x, c->y);
+		}		
 		if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) && !c->isfullscreen)
 			resize(c, c->x, c->y, c->w, c->h, 0);
 		showhide(c->snext);
